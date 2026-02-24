@@ -20,6 +20,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage
 
+API_KEY = os.getenv("API_KEY", "")
 
 # ════════════════════════════════════════════════════════════════════════════
 # System Prompt
@@ -109,7 +110,7 @@ async def run_agent():
 
     llm = ChatAnthropic(
         model="claude-opus-4-6",
-        api_key="REMOVED",
+        api_key=API_KEY,
         temperature=0,
     )
 
