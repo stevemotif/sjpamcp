@@ -22,28 +22,29 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Restore credentials.json
-        run: |
-          echo "${{ secrets.GMAIL_CREDENTIALS_B64 }}" | base64 --decode > credentials.json
+        run: echo "${{ secrets.GMAIL_CREDENTIALS_B64 }}" | base64 --decode > credentials.json
 
       - name: Restore token.json
-        run: |
-          echo "${{ secrets.GMAIL_TOKEN_B64 }}" | base64 --decode > token.json
+        run: echo "${{ secrets.GMAIL_TOKEN_B64 }}" | base64 --decode > token.json
 
       - name: Create .env file
         run: |
-          cat > .env << ENVEOF
-          ANTHROPIC_API_KEY=${{ secrets.API_KEY }}
-          GMAIL_CREDENTIALS_FILE=credentials.json
-          GMAIL_TOKEN_FILE=token.json
-          GMAIL_SMTP_USER=${{ secrets.GMAIL_SMTP_USER }}
-          GMAIL_SMTP_APP_PASSWORD=${{ secrets.GMAIL_SMTP_APP_PASSWORD }}
-          MONGO_URI=${{ secrets.MONGO_URI }}
-          MONGO_DB_NAME=${{ secrets.MONGO_DB_NAME }}
-          ACADEMY_NAME=${{ secrets.ACADEMY_NAME }}
-          ACADEMY_ADDRESS=${{ secrets.ACADEMY_ADDRESS }}
-          ACADEMY_CITY=${{ secrets.ACADEMY_CITY }}
-          BCC_EMAIL=${{ secrets.BCC_EMAIL }}
-          ENVEOF
+          {
+            echo "ANTHROPIC_API_KEY=${{ secrets.API_KEY }}"
+            echo "GMAIL_CREDENTIALS_FILE=credentials.json"
+            echo "GMAIL_TOKEN_FILE=token.json"
+            echo "GMAIL_SMTP_USER=${{ secrets.GMAIL_SMTP_USER }}"
+            echo "GMAIL_SMTP_APP_PASSWORD=${{ secrets.GMAIL_SMTP_APP_PASSWORD }}"
+            echo "MONGO_URI=${{ secrets.MONGO_URI }}"
+            echo "MONGO_DB_NAME=${{ secrets.MONGO_DB_NAME }}"
+            echo "ACADEMY_NAME=${{ secrets.ACADEMY_NAME }}"
+            echo "ACADEMY_ADDRESS=${{ secrets.ACADEMY_ADDRESS }}"
+            echo "ACADEMY_CITY=${{ secrets.ACADEMY_CITY }}"
+            echo "BCC_EMAIL=${{ secrets.BCC_EMAIL }}"
+          } > .env
+
+      - name: Verify .env was created
+        run: cat .env | sed 's/=.*/=***/' # prints keys but hides values
 
       - name: Run Payment Tracker Agent
         run: python agent.py
