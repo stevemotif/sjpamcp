@@ -32,7 +32,7 @@ jobs:
       - name: Create .env file
         run: |
           cat > .env << ENVEOF
-          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY=${{ secrets.API_KEY }}
           GMAIL_CREDENTIALS_FILE=credentials.json
           GMAIL_TOKEN_FILE=token.json
           GMAIL_SMTP_USER=${{ secrets.GMAIL_SMTP_USER }}
