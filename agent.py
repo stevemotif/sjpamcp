@@ -99,7 +99,7 @@ async def run_agent():
                 "command": "python",
                 "args": ["mcp_server.py"],
                 "transport": "stdio",
-                "env": None,
+                "env": dict(os.environ),  # explicitly pass all env vars to subprocess
             }
         }
     )
