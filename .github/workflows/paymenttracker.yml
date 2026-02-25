@@ -1,0 +1,73 @@
+name: SJ Piano Payment Tracker
+
+on:
+  # ── Scheduled trigger ────────────────────────────────────────
+  # Runs every Monday at 9:00 AM EST (14:00 UTC)
+  # Cron format: minute hour day month weekday
+  schedule:
+    - cron: '0 14 * * 1'
+
+  # ── Manual trigger ───────────────────────────────────────────
+  # Lets you run it anytime from GitHub → Actions tab → Run workflow
+  workflow_dispatch:
+
+jobs:
+  run-payment-tracker:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout your code ─────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ──────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      # ── 3. Install dependencies ───────────────────────────────
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── 4. Restore Gmail credentials.json from secret ─────────
+      - name: Restore credentials.json
+        run: |
+          echo "${{ secrets.GMAIL_CREDENTIALS_B64 }}" | base64 --decode > credentials.json
+
+      # ── 5. Restore Gmail token.json from secret ───────────────
+      # This is the OAuth token generated locally — stored as base64 secret
+      - name: Restore token.json
+        run: |
+          echo "${{ secrets.GMAIL_TOKEN_B64 }}" | base64 --decode > token.json
+
+      # ── 6. Create .env file from GitHub Secrets ───────────────
+      - name: Create .env file
+        run: |
+          cat > .env << EOF
+          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_CREDENTIALS_FILE=credentials.json
+          GMAIL_TOKEN_FILE=token.json
+          GMAIL_SMTP_USER=${{ secrets.GMAIL_SMTP_USER }}
+          GMAIL_SMTP_APP_PASSWORD=${{ secrets.GMAIL_SMTP_APP_PASSWORD }}
+          MONGO_URI=${{ secrets.MONGO_URI }}
+          MONGO_DB_NAME=${{ secrets.MONGO_DB_NAME }}
+          ACADEMY_NAME=${{ secrets.ACADEMY_NAME }}
+          ACADEMY_ADDRESS=${{ secrets.ACADEMY_ADDRESS }}
+          ACADEMY_CITY=${{ secrets.ACADEMY_CITY }}
+          BCC_EMAIL=${{ secrets.BCC_EMAIL }}
+          EOF
+
+      # ── 7. Run the agent ──────────────────────────────────────
+      - name: Run Payment Tracker Agent
+        run: python agent.py
+
+      # ── 8. Save updated token.json back (in case it refreshed) ─
+      # Encodes the (possibly refreshed) token and updates the secret
+      - name: Update GMAIL_TOKEN_B64 secret if token refreshed
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          NEW_TOKEN_B64=$(base64 -w 0 token.json)
+          gh secret set GMAIL_TOKEN_B64 --body "$NEW_TOKEN_B64"
