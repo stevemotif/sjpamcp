@@ -40,6 +40,14 @@ jobs:
       - name: Restore token.json
         run: echo "${{ secrets.GMAIL_TOKEN_B64 }}" | base64 --decode > token.json
 
+      - name: Debug - Check env vars are set
+        run: |
+          echo "MONGO_URI is set: $([ -n "$MONGO_URI" ] && echo YES || echo NO)"
+          echo "MONGO_URI length: ${#MONGO_URI}"
+          echo "MONGO_URI value: $MONGO_URI" | sed 's/:\/\/[^@]*@/:\/\/***@/'
+          echo "API_KEY is set: $([ -n "$API_KEY" ] && echo YES || echo NO)"
+          echo "MONGO_DB_NAME: $MONGO_DB_NAME"
+
       - name: Run Payment Tracker Agent
         run: python agent.py
 
