@@ -135,6 +135,7 @@ async def run_agent():
             ]
         },
         version="v2",
+        config={"recursion_limit": 150},
     ):
         kind = event.get("event")
 
