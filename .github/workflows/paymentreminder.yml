@@ -1,0 +1,59 @@
+name: SJ Piano Fee Reminder
+
+on:
+  schedule:
+    - cron: '0 14 * * 3'  # Every Wednesday at 14:00 UTC
+  workflow_dispatch:
+
+jobs:
+  run-fee-reminder:
+    runs-on: ubuntu-latest
+
+    env:
+      API_KEY: ${{ secrets.API_KEY }}
+      GMAIL_CREDENTIALS_FILE: credentials.json
+      GMAIL_TOKEN_FILE: token.json
+      GMAIL_SMTP_USER: ${{ secrets.GMAIL_SMTP_USER }}
+      GMAIL_SMTP_APP_PASSWORD: ${{ secrets.GMAIL_SMTP_APP_PASSWORD }}
+      MONGO_URI: ${{ secrets.MONGO_URI }}
+      MONGO_DB_NAME: ${{ secrets.MONGO_DB_NAME }}
+      ACADEMY_NAME: ${{ secrets.ACADEMY_NAME }}
+      ACADEMY_ADDRESS: ${{ secrets.ACADEMY_ADDRESS }}
+      ACADEMY_CITY: ${{ secrets.ACADEMY_CITY }}
+      BCC_EMAIL: ${{ secrets.BCC_EMAIL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore credentials.json
+        run: echo "${{ secrets.GMAIL_CREDENTIALS_B64 }}" | base64 --decode > credentials.json
+
+      - name: Restore token.json
+        run: echo "${{ secrets.GMAIL_TOKEN_B64 }}" | base64 --decode > token.json
+
+      - name: Debug - Check env vars are set
+        run: |
+          echo "MONGO_URI is set: $([ -n "$MONGO_URI" ] && echo YES || echo NO)"
+          echo "MONGO_URI length: ${#MONGO_URI}"
+          echo "MONGO_URI value: $MONGO_URI" | sed 's/:\/\/[^@]*@/:\/\/***@/'
+          echo "API_KEY is set: $([ -n "$API_KEY" ] && echo YES || echo NO)"
+          echo "MONGO_DB_NAME: $MONGO_DB_NAME"
+
+      - name: Run Fee Reminder Agent
+        run: python reminder_agent.py
+
+      - name: Update GMAIL_TOKEN_B64 secret if token refreshed
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          NEW_TOKEN_B64=$(base64 -w 0 token.json)
+          gh secret set GMAIL_TOKEN_B64 --body "$NEW_TOKEN_B64"

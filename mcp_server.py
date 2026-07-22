@@ -407,6 +407,89 @@ def send_thank_you_email(
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Reminder tools
+# ════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def get_active_students() -> str:
+    """
+    Return all students from the pianostudents collection where:
+      - Status == "Active" (case-insensitive)
+      - Manual field is absent, null, or false
+
+    Each record includes: _id (str), StudentName, ParentName, email, amount.
+    Returns JSON: { "status": "ok", "students": [...] }
+    """
+    try:
+        db = _get_mongo_db()
+        cursor = db.pianostudents.find({
+            "Status": {"$regex": "^active$", "$options": "i"},
+            "$or": [
+                {"Manual": {"$exists": False}},
+                {"Manual": None},
+                {"Manual": False},
+            ],
+        })
+        students = []
+        for s in cursor:
+            s["_id"] = str(s["_id"])
+            students.append(s)
+        return json.dumps({"status": "ok", "students": students})
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)})
+
+
+TEST_EMAIL = os.getenv("TEST_EMAIL", "")
+
+
+@mcp.tool()
+def send_reminder_email(student_email: str) -> str:
+    """
+    Send a polite fee-reminder email to a student/parent.
+    If TEST_EMAIL env var is set, all emails are redirected there instead.
+
+    Args:
+        student_email:  parent/student email from MongoDB
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        month_year = now.strftime("%b %Y")   # e.g. "Apr 2026"
+
+        recipient = TEST_EMAIL if TEST_EMAIL else student_email
+
+        msg = MIMEMultipart()
+        msg["From"] = SMTP_USER
+        msg["To"] = recipient
+        msg["Subject"] = f"Friendly Reminder: {month_year} Lesson Fee | SJ Piano Academy"
+        if not TEST_EMAIL:
+            msg["Bcc"] = BCC_EMAIL
+
+        body = (
+            f"Dear Parents,\n\n"
+            f"I hope this message finds you well.\n"
+            f"This is a friendly reminder that the piano lesson fee for {month_year} is due. "
+            f"Please note the fee cycle is first week of every month. "
+            f"Please let me know if I've missed anything.\n\n"
+            f"Thank you."
+        )
+        msg.attach(MIMEText(body, "plain"))
+
+        recipients = [recipient] if TEST_EMAIL else [student_email, BCC_EMAIL]
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(SMTP_USER, SMTP_APP_PASSWORD)
+            smtp.sendmail(SMTP_USER, recipients, msg.as_string())
+
+        return json.dumps({
+            "status": "ok",
+            "message": f"Reminder email sent to {recipient}"
+                       + (f" (TEST MODE — original: {student_email})" if TEST_EMAIL else ""),
+        })
+
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)})
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # Entry point
 # ════════════════════════════════════════════════════════════════════════════
 
