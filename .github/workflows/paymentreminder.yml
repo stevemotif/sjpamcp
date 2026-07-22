@@ -2,7 +2,7 @@ name: SJ Piano Fee Reminder
 
 on:
   schedule:
-    - cron: '0 14 * * 3'  # Every Wednesday at 14:00 UTC
+    - cron: '0 1 8,15,22,29 * *'  # 8:00 PM EST (UTC-5) on the 7th/14th/21st/28th (next-day UTC date)
   workflow_dispatch:
 
 jobs:
