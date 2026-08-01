@@ -126,6 +126,14 @@ def _parse_parent_name(subject: str) -> Optional[str]:
     return match.group(1).strip() if match else None
 
 
+def _now() -> datetime:
+    """Current UTC time, overridable via REMINDER_DATE (e.g. '2026-07-31') for backfilled runs."""
+    override = os.getenv("REMINDER_DATE")
+    if override:
+        return datetime.fromisoformat(override).replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc)
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # MCP Server
 # ════════════════════════════════════════════════════════════════════════════
@@ -151,7 +159,7 @@ def search_interac_emails() -> str:
         service = _get_gmail_service()
 
         # Build date range: 1st of current month 00:00 UTC → now
-        now = datetime.now(timezone.utc)
+        now = _now()
         start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         # Gmail query uses epoch seconds for after:/before:
         after_epoch = int(start_of_month.timestamp())
@@ -258,7 +266,7 @@ def check_invoice_exists(student_email: str) -> str:
     try:
         db = _get_mongo_db()
 
-        now = datetime.now(timezone.utc)
+        now = _now()
         # Start and end of current month
         start_of_month = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
         if now.month == 12:
@@ -452,7 +460,7 @@ def send_reminder_email(student_email: str) -> str:
         student_email:  parent/student email from MongoDB
     """
     try:
-        now = datetime.now(timezone.utc)
+        now = _now()
         month_year = now.strftime("%b %Y")   # e.g. "Apr 2026"
 
         recipient = TEST_EMAIL if TEST_EMAIL else student_email

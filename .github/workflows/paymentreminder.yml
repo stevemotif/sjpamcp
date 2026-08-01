@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 1 8,15,22,29 * *'  # 8:00 PM EST (UTC-5) on the 7th/14th/21st/28th (next-day UTC date)
   workflow_dispatch:
+    inputs:
+      reminder_date:
+        description: 'Override "current month" date (YYYY-MM-DD), e.g. 2026-07-31. Leave blank for the real date.'
+        required: false
+        default: ''
 
 jobs:
   run-fee-reminder:
@@ -21,6 +26,7 @@ jobs:
       ACADEMY_ADDRESS: ${{ secrets.ACADEMY_ADDRESS }}
       ACADEMY_CITY: ${{ secrets.ACADEMY_CITY }}
       BCC_EMAIL: ${{ secrets.BCC_EMAIL }}
+      REMINDER_DATE: ${{ github.event.inputs.reminder_date }}
 
     steps:
       - name: Checkout repository
