@@ -2,7 +2,8 @@ name: SJ Piano Payment Tracker
 
 on:
   schedule:
-    - cron: '0 14 * * 1'
+    - cron: '0 14 * * 1'          # existing weekly Monday run
+    - cron: '30 0 8,15,22,29 * *' # 30 min before each Fee Reminder run (01:00 UTC on the same days)
   workflow_dispatch:
 
 jobs:

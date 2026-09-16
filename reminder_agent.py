@@ -52,7 +52,11 @@ STEP 3 — For each active student, decide whether to send a reminder:
       Mark as PAID and move to the next student. Do NOT send a reminder.
 
   3b. CHECK INVOICE IN DATABASE
-      Call `check_invoice_exists` with the student's email from MongoDB.
+      Call `check_invoice_exists` with:
+        - student_email: from the MongoDB student record
+        - student_name:  from the MongoDB student record
+      Always pass both — siblings share the same email, so checking email
+      alone would incorrectly mark an unpaid sibling as already paid.
       If an invoice already exists for this month, mark as PAID and move on.
       Do NOT send a reminder.
 
@@ -60,6 +64,13 @@ STEP 3 — For each active student, decide whether to send a reminder:
       If NEITHER a matching email NOR an invoice exists, call `send_reminder_email`
       with:
         - student_email: from the MongoDB student record
+
+      NOTE ON SIBLINGS: a parent with 2 children who share the same email
+      will appear as 2 separate students in STEP 1. If BOTH are unpaid,
+      still call `send_reminder_email` for each one — the tool itself
+      recognizes a repeat email address and automatically skips sending a
+      duplicate, so the parent only ever receives ONE reminder regardless
+      of how many of their children are unpaid.
 
 ---
 STEP 4 — Final Report
@@ -74,6 +85,8 @@ IMPORTANT RULES:
 - Never send a reminder if the student already has a payment email or invoice this month.
 - Process one student at a time, completing all checks before moving on.
 - The ParentName comparison is case-insensitive.
+- A parent with multiple children should receive exactly ONE reminder email,
+  never one per child, even if multiple of their children are unpaid.
 """
 
 

@@ -16,6 +16,7 @@ Run with:
 import os
 import json
 import base64
+import itertools
 import smtplib
 import time
 import re
@@ -36,7 +37,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
 # ── MongoDB ─────────────────────────────────────────────────────────────────
-from pymongo import MongoClient
+from pymongo import MongoClient, ReturnDocument
 
 # ── MCP ─────────────────────────────────────────────────────────────────────
 from mcp.server.fastmcp import FastMCP
@@ -217,65 +218,156 @@ def search_interac_emails() -> str:
         return json.dumps({"status": "error", "message": str(e)})
 
 
+def _month_bounds(now: datetime) -> tuple[datetime, datetime]:
+    start_of_month = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    if now.month == 12:
+        end_of_month = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        end_of_month = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+    return start_of_month, end_of_month
+
+
+def _has_invoice_this_month(db, student_email: str, student_name: str) -> bool:
+    """
+    An invoice already exists for this SPECIFIC student (matched by both
+    name AND email) this month. Siblings frequently share the same parent
+    email, so matching on email alone would mark an unpaid sibling as
+    already invoiced just because their brother/sister was invoiced.
+    """
+    start_of_month, end_of_month = _month_bounds(_now())
+    invoice = db.invoices.find_one({
+        "students.email": {"$regex": f"^{re.escape(student_email)}$", "$options": "i"},
+        "students.name": {"$regex": f"^{re.escape(student_name)}$", "$options": "i"},
+        "feepaiddate": {
+            "$gte": start_of_month,
+            "$lt": end_of_month,
+        },
+    })
+    return invoice is not None
+
+
+def _amount_cents(student: dict) -> Optional[int]:
+    try:
+        return round(float(student.get("amount", "")) * 100)
+    except (TypeError, ValueError):
+        return None
+
+
 @mcp.tool()
 def find_student_by_parent(parent_name: str, reply_to_email: str, amount: float) -> str:
     """
-    Look up a student in the pianostudents collection by matching:
-      - ParentName  == parent_name  (case-insensitive)
-      - email       == reply_to_email
-      - amount      == str(int(amount))  e.g. "200"
+    Resolve an Interac payment to the student(s) in pianostudents it covers,
+    matching on ParentName (case-insensitive) and email.
 
-    Returns the student document as JSON, or an error message.
+    Handles two cases:
+      1. SINGLE CHILD — the paid amount exactly equals one child's own
+         "amount" field. Returns that one student.
+      2. COMBINED PAYMENT / SIBLINGS — a parent with multiple children can
+         pay for more than one in a single e-transfer (e.g. $240 covering
+         two children whose individual fee is $120 each), or send separate
+         transfers of the same amount for each child. This looks at all of
+         that parent's children (matched by ParentName + email) who do NOT
+         already have an invoice this month, and finds the smallest group
+         of them whose individual "amount" fields sum exactly to the paid
+         amount. This also naturally handles the sibling-disambiguation
+         case (two kids with the same individual fee, paid separately) by
+         excluding whichever kid was already invoiced earlier in the run.
+
+    Returns JSON:
+      { "status": "ok", "students": [<one or more student docs>] }
+      { "status": "not_found", "message": ... }
+      { "status": "already_invoiced", "message": ... }
     """
     try:
         db = _get_mongo_db()
-        # Amount stored as string like "200"
-        amount_str = str(int(amount))
+        paid_cents = round(amount * 100)
 
-        student = db.pianostudents.find_one({
+        all_candidates = list(db.pianostudents.find({
             "ParentName": {"$regex": f"^{re.escape(parent_name)}$", "$options": "i"},
             "email": {"$regex": f"^{re.escape(reply_to_email)}$", "$options": "i"},
-            "amount": amount_str,
-        })
+        }))
 
-        if not student:
+        if not all_candidates:
             return json.dumps({
                 "status": "not_found",
                 "message": (
-                    f"No active student found for parent='{parent_name}', "
-                    f"email='{reply_to_email}', amount='{amount_str}'"
+                    f"No student found for parent='{parent_name}', "
+                    f"email='{reply_to_email}'"
                 ),
             })
 
-        # Convert ObjectId to string for JSON serialisation
-        student["_id"] = str(student["_id"])
-        return json.dumps({"status": "ok", "student": student})
+        uninvoiced = [
+            s for s in all_candidates
+            if not _has_invoice_this_month(db, reply_to_email, s.get("studentname", ""))
+        ]
+
+        if not uninvoiced:
+            return json.dumps({
+                "status": "already_invoiced",
+                "message": (
+                    f"All {len(all_candidates)} matching child(ren) for "
+                    f"parent='{parent_name}', email='{reply_to_email}' already have "
+                    f"invoices this month."
+                ),
+            })
+
+        # Try smallest groups first: a lone exact match wins before any
+        # multi-child combination is considered.
+        match = None
+        for size in range(1, len(uninvoiced) + 1):
+            for combo in itertools.combinations(uninvoiced, size):
+                combo_cents = [_amount_cents(s) for s in combo]
+                if None in combo_cents:
+                    continue
+                if sum(combo_cents) == paid_cents:
+                    match = combo
+                    break
+            if match:
+                break
+
+        if not match:
+            return json.dumps({
+                "status": "not_found",
+                "message": (
+                    f"No unpaid child or combination of children for "
+                    f"parent='{parent_name}', email='{reply_to_email}' sums to "
+                    f"${amount:.2f}."
+                ),
+            })
+
+        students = []
+        for s in match:
+            s = dict(s)
+            s["_id"] = str(s["_id"])
+            students.append(s)
+
+        return json.dumps({"status": "ok", "students": students})
 
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)})
 
 
 @mcp.tool()
-def check_invoice_exists(student_email: str) -> str:
+def check_invoice_exists(student_email: str, student_name: str) -> str:
     """
     Check whether an invoice already exists in the invoices collection
-    for the given student email in the CURRENT calendar month.
+    for the given student (matched by BOTH email AND name) in the CURRENT
+    calendar month.
+
+    Always pass student_name — siblings often share the same parent email,
+    and matching on email alone would incorrectly report an unpaid sibling
+    as already invoiced.
 
     Returns JSON: { "exists": true/false, "invoice": <doc or null> }
     """
     try:
         db = _get_mongo_db()
 
-        now = _now()
-        # Start and end of current month
-        start_of_month = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
-        if now.month == 12:
-            end_of_month = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
-        else:
-            end_of_month = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+        start_of_month, end_of_month = _month_bounds(_now())
 
         invoice = db.invoices.find_one({
             "students.email": {"$regex": f"^{re.escape(student_email)}$", "$options": "i"},
+            "students.name": {"$regex": f"^{re.escape(student_name)}$", "$options": "i"},
             "feepaiddate": {
                 "$gte": start_of_month,
                 "$lt": end_of_month,
@@ -358,6 +450,8 @@ def send_thank_you_email(
 ) -> str:
     """
     Generate a PDF receipt and email it to the student.
+    If TEST_EMAIL env var is set, all emails are redirected there instead
+    (useful for testing locally without emailing real families).
 
     Args:
         student_name:       e.g. "Yanish"
@@ -369,6 +463,9 @@ def send_thank_you_email(
     try:
         fee_paid_date = datetime.fromisoformat(fee_paid_date_iso).astimezone(timezone.utc)
         month_year = fee_paid_date.strftime("%b %Y")   # e.g. "Feb 2026"
+
+        test_email = os.getenv("TEST_EMAIL", "")
+        recipient = test_email if test_email else student_email
 
         # ── Generate PDF receipt ──────────────────────────────────
         pdf_bytes = generate_receipt(
@@ -382,9 +479,10 @@ def send_thank_you_email(
         # ── Build email ───────────────────────────────────────────
         msg = MIMEMultipart()
         msg["From"] = SMTP_USER
-        msg["To"] = student_email
+        msg["To"] = recipient
         msg["Subject"] = f"Receipt for lesson payment {month_year} | SJ Piano Academy"
-        msg["Bcc"] = BCC_EMAIL
+        if not test_email:
+            msg["Bcc"] = BCC_EMAIL
         body = (
             "We have attached a digital copy of your receipt for your convenience."
         )
@@ -400,13 +498,15 @@ def send_thank_you_email(
         msg.attach(attachment)
 
         # ── Send via Gmail SMTP ───────────────────────────────────
+        recipients = [recipient] if test_email else [student_email, BCC_EMAIL]
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
             smtp.login(SMTP_USER, SMTP_APP_PASSWORD)
-            smtp.sendmail(SMTP_USER, [student_email, BCC_EMAIL], msg.as_string())
+            smtp.sendmail(SMTP_USER, recipients, msg.as_string())
 
         return json.dumps({
             "status": "ok",
-            "message": f"Thank you email sent to {student_email}",
+            "message": f"Thank you email sent to {recipient}"
+                       + (f" (TEST MODE — original: {student_email})" if test_email else ""),
             "receipt_number": invoice_number,
         })
 
@@ -450,15 +550,66 @@ def get_active_students() -> str:
 TEST_EMAIL = os.getenv("TEST_EMAIL", "")
 
 
+def _reserve_reminder_slot(db, email_key: str, date_key: str) -> bool:
+    """
+    Atomically claims the "reminder sent" slot for this email on this date.
+
+    NOTE: each MCP tool call from the agent runs in its OWN fresh subprocess
+    (langchain-mcp-adapters creates a new stdio session per call), so an
+    in-memory set does NOT persist across calls within the same agent run —
+    it resets to empty every time. MongoDB is the only state genuinely
+    shared across those subprocesses, so the "already sent today" flag is
+    stored there instead, with an atomic find-and-update so two near-
+    simultaneous calls for the same family can't both win the race.
+
+    Returns True if this call just claimed the slot (proceed to send),
+    False if another call already claimed it today (skip — would duplicate).
+    """
+    existing = db.reminderlog.find_one_and_update(
+        {"email": email_key, "date": date_key},
+        {"$setOnInsert": {
+            "email": email_key,
+            "date": date_key,
+            "sent_at": datetime.now(timezone.utc),
+        }},
+        upsert=True,
+        return_document=ReturnDocument.BEFORE,  # None if this call just inserted it
+    )
+    return existing is None
+
+
+def _release_reminder_slot(db, email_key: str, date_key: str) -> None:
+    """Undo a reservation if the actual send subsequently failed."""
+    db.reminderlog.delete_one({"email": email_key, "date": date_key})
+
+
 @mcp.tool()
 def send_reminder_email(student_email: str) -> str:
     """
     Send a polite fee-reminder email to a student/parent.
     If TEST_EMAIL env var is set, all emails are redirected there instead.
 
+    A parent with multiple children shares one email address. This tool
+    tracks (in MongoDB) whether a reminder was already sent to this email
+    TODAY, so if you call it once per unpaid student, siblings after the
+    first will get a "skipped" result and no duplicate reminder is sent.
+
     Args:
         student_email:  parent/student email from MongoDB
     """
+    email_key = student_email.strip().lower()
+    date_key = _now().strftime("%Y-%m-%d")
+    db = _get_mongo_db()
+
+    if not _reserve_reminder_slot(db, email_key, date_key):
+        return json.dumps({
+            "status": "skipped",
+            "message": (
+                f"Reminder already sent to {student_email} earlier today "
+                f"(likely a sibling of this student) — not sending a duplicate."
+            ),
+        })
+
     try:
         now = _now()
         month_year = now.strftime("%b %Y")   # e.g. "Apr 2026"
@@ -494,6 +645,10 @@ def send_reminder_email(student_email: str) -> str:
         })
 
     except Exception as e:
+        # The send failed, so give up the reservation — otherwise this
+        # family would be silently skipped for the rest of the day even
+        # though they never actually got a reminder.
+        _release_reminder_slot(db, email_key, date_key)
         return json.dumps({"status": "error", "message": str(e)})
 
 

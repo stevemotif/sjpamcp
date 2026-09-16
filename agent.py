@@ -41,34 +41,65 @@ and stop.
 ---
 STEP 2 — For each email found, do the following sub-steps:
 
-  2a. VALIDATE STUDENT
+  2a. VALIDATE STUDENT(S)
       Call `find_student_by_parent` with:
         - parent_name:    extracted from the email subject
         - reply_to_email: the reply-to address from the email
         - amount:         the dollar amount from the email subject
 
-      If no matching student is found, log a warning for this email and
-      move on to the next one. Do NOT proceed with this email.
+      This returns a "students" LIST, not a single student — it can contain
+      MORE THAN ONE child. That happens when:
+        a) SIBLINGS PAID TOGETHER — a parent with e.g. two $120 children
+           pays $240 in one transfer. `find_student_by_parent` will match
+           that $240 to the combination of both children's individual fees
+           and return BOTH student records.
+        b) SIBLINGS PAID SEPARATELY — the same parent sends two separate
+           $120 transfers, one per child. Each email resolves to a list
+           containing just the one sibling who does not already have an
+           invoice this month.
+      Either way, you must repeat sub-steps 2b–2d for EVERY student in the
+      returned list — one invoice and one thank-you email PER CHILD, even
+      though there was only one payment email. Two children always means
+      two invoices, never one invoice covering both.
+
+      If the result is "not_found", log a warning for this email and move
+      on to the next one. Do NOT proceed with this email.
+
+      If the result is "already_invoiced", every child matching that parent
+      name/email already has an invoice this month — log it and move on.
+      Do NOT create a duplicate.
+
+  For EACH student in the "students" list returned by 2a, do:
 
   2b. CHECK FOR EXISTING INVOICE
-      Call `check_invoice_exists` with the student's email from MongoDB.
+      Call `check_invoice_exists` with:
+        - student_email: this student's email from MongoDB
+        - student_name:  this student's name from MongoDB
+
+      Always pass both — siblings share the same email, so checking email
+      alone would incorrectly mark an unpaid sibling as already invoiced.
 
       If an invoice already exists for this month:
         - Log: "Invoice already exists for <student_name> (<email>) — skipping."
-        - Move on to the next email. Do NOT create a duplicate.
+        - Move on to the next student in the list. Do NOT create a duplicate.
 
   2c. CREATE INVOICE
       Call `create_invoice` with:
         - student_name:      from the MongoDB student record
         - student_email:     from the MongoDB student record
-        - amount:            from the email
+        - amount:            THIS STUDENT'S OWN "amount" field from MongoDB
+                              — NOT the total dollar amount from the email.
+                              When one payment covers multiple children,
+                              each child's invoice must show only their own
+                              individual fee.
         - fee_paid_date_iso: the date the email was received (ISO 8601 UTC)
 
   2d. SEND THANK-YOU EMAIL
       Call `send_thank_you_email` with:
         - student_name:      from MongoDB
         - student_email:     from MongoDB
-        - amount:            from the email
+        - amount:            THIS STUDENT'S OWN "amount" field from MongoDB
+                              (same rule as 2c — never the combined email total)
         - invoice_number:    from the newly created invoice (step 2c)
         - fee_paid_date_iso: the date the email was received
 
@@ -76,14 +107,18 @@ STEP 2 — For each email found, do the following sub-steps:
 STEP 3 — Final Report
 After processing all emails, produce a clear summary:
   - How many emails were found
-  - For each: student name, amount, action taken (processed / skipped / error)
+  - For each: student name(s), amount(s), action taken (processed / skipped / error)
 
 ---
 IMPORTANT RULES:
 - Never create a duplicate invoice for the same student in the same month.
-- Only proceed if parent name, email, AND amount ALL match a student record.
+- Only proceed if parent name and email match a student record.
 - Always use the student's email from MongoDB (not the reply-to) for sending.
-- Be methodical. Process one email at a time, completing all sub-steps before moving on.
+- A parent with 2 children needs 2 separate invoices and 2 thank-you emails
+  (one per child) — never combine siblings into a single invoice, and never
+  put the combined payment total on one child's invoice.
+- Be methodical. Process one email at a time, completing all sub-steps for
+  every student it resolves to before moving on to the next email.
 """
 
 
