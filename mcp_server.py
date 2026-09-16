@@ -518,12 +518,34 @@ def send_thank_you_email(
 # Reminder tools
 # ════════════════════════════════════════════════════════════════════════════
 
+def _is_manual_billing(student: dict) -> bool:
+    """
+    True if this student pays outside the automated e-Transfer flow (e.g.
+    cash) and should be excluded from automated reminders/tracking.
+
+    The pianostudents collection has TWO inconsistent conventions for this
+    flag across records: capital "Manual" (boolean True/False) and
+    lowercase "manual" (string "true"/"false"). Check both spellings and
+    treat True or the string "true" (any case) as manual billing, rather
+    than trusting one exact key name + type — a single-convention Mongo
+    query silently misses the other convention's records.
+    """
+    for key in ("Manual", "manual"):
+        value = student.get(key)
+        if value is True:
+            return True
+        if isinstance(value, str) and value.strip().lower() == "true":
+            return True
+    return False
+
+
 @mcp.tool()
 def get_active_students() -> str:
     """
     Return all students from the pianostudents collection where:
       - Status == "Active" (case-insensitive)
-      - Manual field is absent, null, or false
+      - NOT flagged for manual/cash billing (see _is_manual_billing —
+        checks both "Manual" and "manual" fields, boolean or string)
 
     Each record includes: _id (str), StudentName, ParentName, email, amount.
     Returns JSON: { "status": "ok", "students": [...] }
@@ -532,14 +554,11 @@ def get_active_students() -> str:
         db = _get_mongo_db()
         cursor = db.pianostudents.find({
             "Status": {"$regex": "^active$", "$options": "i"},
-            "$or": [
-                {"Manual": {"$exists": False}},
-                {"Manual": None},
-                {"Manual": False},
-            ],
         })
         students = []
         for s in cursor:
+            if _is_manual_billing(s):
+                continue
             s["_id"] = str(s["_id"])
             students.append(s)
         return json.dumps({"status": "ok", "students": students})

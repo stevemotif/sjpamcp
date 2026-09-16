@@ -1,0 +1,62 @@
+name: SJ Piano Manual Invoice (Cash Payments)
+
+on:
+  workflow_dispatch:
+    inputs:
+      student_name:
+        description: 'Student name (must match pianostudents.studentname)'
+        required: true
+      amount:
+        description: 'Amount paid, e.g. 120'
+        required: true
+      date:
+        description: 'Payment date YYYY-MM-DD (leave blank for today)'
+        required: false
+        default: ''
+      force:
+        description: 'Create a new invoice even if one exists this month'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  create-manual-invoice:
+    runs-on: ubuntu-latest
+
+    env:
+      GMAIL_SMTP_USER: ${{ secrets.GMAIL_SMTP_USER }}
+      GMAIL_SMTP_APP_PASSWORD: ${{ secrets.GMAIL_SMTP_APP_PASSWORD }}
+      MONGO_URI: ${{ secrets.MONGO_URI }}
+      MONGO_DB_NAME: ${{ secrets.MONGO_DB_NAME }}
+      ACADEMY_NAME: ${{ secrets.ACADEMY_NAME }}
+      ACADEMY_ADDRESS: ${{ secrets.ACADEMY_ADDRESS }}
+      ACADEMY_CITY: ${{ secrets.ACADEMY_CITY }}
+      BCC_EMAIL: ${{ secrets.BCC_EMAIL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create and send manual invoice
+        env:
+          STUDENT_NAME: ${{ github.event.inputs.student_name }}
+          AMOUNT: ${{ github.event.inputs.amount }}
+          PAY_DATE: ${{ github.event.inputs.date }}
+          FORCE_FLAG: ${{ github.event.inputs.force }}
+        run: |
+          ARGS=(--student "$STUDENT_NAME" --amount "$AMOUNT")
+          if [ -n "$PAY_DATE" ]; then
+            ARGS+=(--date "$PAY_DATE")
+          fi
+          if [ "$FORCE_FLAG" = "true" ]; then
+            ARGS+=(--force)
+          fi
+          python manual_invoice.py "${ARGS[@]}"
