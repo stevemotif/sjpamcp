@@ -5,6 +5,9 @@
 credentials.json
 token.json
 
+# Local one-time secrets-encoding helper — not needed in the repo
+prepare_github_secrets.py
+
 # Python
 __pycache__/
 *.py[cod]
