@@ -145,7 +145,6 @@ async def run_agent():
     llm = ChatAnthropic(
         model="claude-opus-4-6",
         api_key=os.getenv("API_KEY"),
-        temperature=0,
     )
 
     agent = create_react_agent(
